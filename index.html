@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Transcription</title>
+    <link rel="stylesheet" href="transcript_style.css">
+</head>
+<body>
+    <div class="header">
+        <button id="toggleButton" class="button toggle-button start">Start Transcription</button>
+    </div>
+    <div id="status">Ready to start transcription.</div>
+    <div class="transcript-container" id="transcript"></div>
+
+    <script>
+        let socket = null;
+        let isTranscribing = false;
+        let isConnecting = false;
+        const transcriptDiv = document.getElementById('transcript');
+        const toggleButton = document.getElementById('toggleButton');
+
+        // Set WebSocket URL dynamically
+        const socketUrl = window.location.hostname === "localhost"
+            ? "ws://localhost:8765"
+            : "wss://" + window.location.hostname;
+
+        function updateStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.color = isError ? '#dc3545' : '#28a745';
+            console.log('Status updated:', message);
+        }
+
+        function setButtonState(isStartState) {
+            toggleButton.textContent = isStartState ? 'Start Transcription' : 'Stop Transcription';
+            toggleButton.className = `button toggle-button ${isStartState ? 'start' : 'stop'}`;
+            isTranscribing = !isStartState;
+            toggleButton.disabled = isConnecting;
+        }
+
+        function appendTranscript(text, isPartial) {
+            const textElement = document.createElement('div');
+            textElement.className = isPartial ? 'partial-text' : 'final-text';
+            textElement.textContent = text;
+            transcriptDiv.appendChild(textElement);
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        }
+
+        function startTranscription() {
+            if (isConnecting) {
+                console.warn("Already attempting a connection");
+                return;
+            }
+
+            isConnecting = true;
+
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                console.warn("A transcription session is already running.");
+                isConnecting = false;
+                return;
+            }
+
+            socket = new WebSocket(socketUrl);
+            updateStatus('Connecting to server...');
+            setButtonState(false);
+
+            socket.onopen = () => {
+                console.log("Transcription connection opened");
+                socket.send('start');
+                updateStatus('Transcription started.');
+                isConnecting = false;
+                setButtonState(false);
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Transcription message received:', data);
+
+                    if (data.type === "final" || data.type === "partial") {
+                        appendTranscript(data.text, data.type === "partial");
+                    } else if (data.type === "error") {
+                        updateStatus(`Error: ${data.text}`, true);
+                        isConnecting = false;
+                        setButtonState(true);
+                    }
+                } catch (e) {
+                    console.error("Error parsing transcription message:", e, event.data);
+                }
+            };
+
+            socket.onclose = () => {
+                console.log('Transcription connection closed');
+                updateStatus('Connection closed.');
+                isConnecting = false;
+                setButtonState(true);
+            };
+
+            socket.onerror = (error) => {
+                console.error('Transcription socket error:', error);
+                updateStatus('Error connecting to server.', true);
+                isConnecting = false;
+                setButtonState(true);
+            };
+        }
+
+        function stopTranscription() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                console.log("Sending stop command");
+                socket.send('stop');
+                socket.close();
+            }
+            updateStatus('Transcription stopped.');
+            setButtonState(true);
+        }
+
+        toggleButton.addEventListener('click', () => {
+            if (isTranscribing) {
+                stopTranscription();
+            } else {
+                startTranscription();
+            }
+        });
+
+        window.addEventListener('beforeunload', () => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.close();
+            }
+        });
+    </script>
+</body>
+</html>
